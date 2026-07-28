@@ -1,3 +1,16 @@
 .DS_Store
 Thumbs.db
 *.log
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+Desktop.ini
+$RECYCLE.BIN/
+
+# Claude
+.claude/
