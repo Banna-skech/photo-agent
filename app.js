@@ -1,9 +1,5 @@
 /**
  * 员工照片批量处理 — 纯浏览器版
- *
- * 参数依据：0702/0717 批次 70+ 张参考照片的像素级分析
- * 工牌照: 人像填满 ~87% 高度, 上边距 ~12%, 显示头部到胸口
- * 座位牌: 人像填满 ~93% 高度, 上边距 ~5%,  显示头部到手臂下方
  */
 const CW = 1080, CH = 1440, JQ = 0.92;
 
@@ -24,7 +20,7 @@ const E = {
 const S = { files: [], results: [], busy: false };
 let rmBg = null;
 
-// ====== Settings sliders ======
+// ====== Sliders ======
 [{e: E.bTM, v: E.bTMv},{e: E.pTM, v: E.pTMv},{e: E.sm, v: E.smv},{e: E.br, v: E.brv}]
   .forEach(x => { x.e.oninput = () => x.v.textContent = x.e.value + '%'; });
 
@@ -45,7 +41,7 @@ function upBtn() {
   E.proc.textContent = S.files.length ? `🚀 开始处理 (${S.files.length} 张)` : '🚀 开始处理';
 }
 
-// ====== File management ======
+// ====== Files ======
 function addFiles(fs) {
   for (const f of fs) {
     if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
@@ -76,69 +72,130 @@ $('#clearFiles').onclick = () => {
 // ====== Image utils ======
 function loadImg(b) { return new Promise((ok,er) => { const i=new Image(); i.onload=()=>ok(i); i.onerror=er; i.src=URL.createObjectURL(b); }); }
 function toJpg(c) { return new Promise(ok => c.toBlob(ok,'image/jpeg',JQ)); }
-
 function shrink(img, max) {
   const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
-  if (Math.max(w,h) <= max) {
-    const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0); return c;
-  }
+  if (Math.max(w,h) <= max) { const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0); return c; }
   const s = max/Math.max(w,h);
   const c=document.createElement('canvas'); c.width=Math.round(w*s); c.height=Math.round(h*s);
   c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c;
 }
 
-// ====== Clean background: kill gray artifacts from AI model ======
-function cleanBg(canvas) {
-  const ctx = canvas.getContext('2d');
-  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
-  const out = new Uint8ClampedArray(d.length);
+/**
+ * 核心：用 AI 输出的 Alpha 通道做纯净白底
+ *
+ * AI 模型返回 RGBA PNG：
+ *   Alpha = 0    → 模型100%确定是背景
+ *   Alpha = 255  → 模型100%确定是前景（人）
+ *   Alpha 中间值 → 边缘/头发/半透明区域
+ *
+ * 正确的做法：读取 Alpha 通道，按阈值二值化。
+ * Alpha < 阈值的像素 → 纯白，Alpha >= 阈值的像素 → 保留原色。
+ * 这比事后 RGB 阈值清理精确得多，因为 Alpha 就是模型的判断。
+ */
+function applyAlphaMask(rgbaCanvas, alphaThreshold) {
+  const ctx = rgbaCanvas.getContext('2d');
+  const w = rgbaCanvas.width, h = rgbaCanvas.height;
+  const imgData = ctx.getImageData(0, 0, w, h);
+  const d = imgData.data;
+  const thresh = alphaThreshold || 210;
+
   for (let i = 0; i < d.length; i += 4) {
-    if (d[i] > 238 && d[i+1] > 238 && d[i+2] > 238) {
-      // near-white → pure white (kills gray specks without touching skin)
-      out[i] = 255; out[i+1] = 255; out[i+2] = 255; out[i+3] = 255;
-    } else {
-      out[i] = d[i]; out[i+1] = d[i+1]; out[i+2] = d[i+2]; out[i+3] = 255;
+    if (d[i + 3] < thresh) {
+      // 模型判定为背景 → 纯白
+      d[i] = 255;
+      d[i + 1] = 255;
+      d[i + 2] = 255;
     }
+    // 无论前景还是背景，最终都输出完全不透明
+    d[i + 3] = 255;
   }
-  ctx.putImageData(new ImageData(out, canvas.width, canvas.height), 0, 0);
+
+  ctx.putImageData(imgData, 0, 0);
+
+  // 二次：中值滤波去孤点（3×3 核，RGB 空间）
+  medianFilter(ctx, w, h);
 }
 
-// ====== Compose: crop person to body portion, scale to fill canvas ======
-// bodyPct: what portion of the person to show (0.55=chest, 0.68=below arms)
-// topPct:  top margin as % of canvas height
+/**
+ * 中值滤波：每个像素取 3×3 邻域中位数色值
+ * 只影响孤立的噪点像素，不破坏大面积区域
+ */
+function medianFilter(ctx, w, h) {
+  const src = ctx.getImageData(0, 0, w, h);
+  const sd = src.data;
+  const out = new ImageData(w, h);
+  const od = out.data;
+
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const ci = (y * w + x) * 4;
+      const R = [], G = [], B = [];
+
+      for (let dy = -1; dy <= 1; dy++) {
+        for (let dx = -1; dx <= 1; dx++) {
+          const ni = ((y + dy) * w + (x + dx)) * 4;
+          R.push(sd[ni]); G.push(sd[ni + 1]); B.push(sd[ni + 2]);
+        }
+      }
+
+      R.sort((a, b) => a - b); G.sort((a, b) => a - b); B.sort((a, b) => a - b);
+      od[ci] = R[4]; od[ci + 1] = G[4]; od[ci + 2] = B[4]; od[ci + 3] = 255;
+
+      // 如果中位数是纯白，且原像素不是纯白 → 噪点，涂白
+      if (od[ci] === 255 && od[ci + 1] === 255 && od[ci + 2] === 255) {
+        if (sd[ci] < 250 || sd[ci + 1] < 250 || sd[ci + 2] < 250) {
+          // 周围都是白，只有这个像素有色 → 噪点
+        }
+      }
+    }
+  }
+
+  // 只替换被中值滤波判定为噪点的区域
+  for (let y = 1; y < h - 1; y++) {
+    for (let x = 1; x < w - 1; x++) {
+      const ci = (y * w + x) * 4;
+      // 原像素非白，中值滤波后变白 → 孤立噪点
+      const wasNoise = (sd[ci] < 248 || sd[ci + 1] < 248 || sd[ci + 2] < 248) &&
+        (od[ci] >= 248 && od[ci + 1] >= 248 && od[ci + 2] >= 248);
+      if (wasNoise) {
+        sd[ci] = od[ci]; sd[ci + 1] = od[ci + 1]; sd[ci + 2] = od[ci + 2];
+      }
+    }
+  }
+
+  ctx.putImageData(src, 0, 0);
+}
+
+// ====== Compose: crop + scale onto 1080x1440 ======
 function compose(srcCanvas, bodyPct, topPct) {
   const ctx = srcCanvas.getContext('2d');
   const w = srcCanvas.width, h = srcCanvas.height;
   const step = Math.max(4, Math.min(w, h) >> 7);
   const raw = ctx.getImageData(0, 0, w, h).data;
 
-  // Find person bounds
+  // Content bounds
   let L = w, T = h, R = 0, B = 0;
   for (let y = 0; y < h; y += step) {
     for (let x = 0; x < w; x += step) {
       const i = (y * w + x) * 4;
-      if (raw[i] < 245 || raw[i+1] < 245 || raw[i+2] < 245) {
+      if (raw[i] < 245 || raw[i + 1] < 245 || raw[i + 2] < 245) {
         if (x < L) L = x; if (y < T) T = y;
         if (x > R) R = x; if (y > B) B = y;
       }
     }
   }
-  if (R <= L) { L = 0; T = 0; R = w-1; B = h-1; }
-  const pw = R - L + 1;
-  const ph = B - T + 1;
+  if (R <= L) { L = 0; T = 0; R = w - 1; B = h - 1; }
+  const pw = R - L + 1, ph = B - T + 1;
 
-  // Crop to top bodyPct of the person height
+  // Crop to top bodyPct of person
   const cropH = Math.round(ph * bodyPct);
 
-  // Scale: person fills 87-93% of canvas height
+  // Scale to fill 87-93% of canvas height
   const targetH = CH * (bodyPct > 0.65 ? 0.93 : 0.87);
   const scale = targetH / cropH;
-  const drawW = Math.round(pw * scale);
-  const drawH = Math.round(cropH * scale);
+  const drawW = Math.round(pw * scale), drawH = Math.round(cropH * scale);
 
-  // Position
-  let drawX = Math.round((CW - drawW) / 2);
-  let drawY = Math.round(CH * topPct / 100);
+  let drawX = Math.round((CW - drawW) / 2), drawY = Math.round(CH * topPct / 100);
   if (drawX < 0) drawX = 0;
   if (drawY + drawH > CH) drawY = CH - drawH;
   if (drawY < 0) drawY = 0;
@@ -148,21 +205,18 @@ function compose(srcCanvas, bodyPct, topPct) {
   octx.fillStyle = '#FFF'; octx.fillRect(0, 0, CW, CH);
   octx.drawImage(srcCanvas, L, T, pw, cropH, drawX, drawY, drawW, drawH);
 
-  // Clean background artifacts
-  cleanBg(out);
   return out;
 }
 
-// ====== Beautify on final 1080x1440 canvas ======
+// ====== Beautify (on 1080x1440) ======
 function beautify(cvs) {
   const s = parseInt(E.sm.value), b = parseInt(E.br.value);
   if (s <= 0 && b <= 0) return;
   const w = cvs.width, h = cvs.height;
 
-  // blur layer
   const bl = document.createElement('canvas'); bl.width = w; bl.height = h;
   const bctx = bl.getContext('2d');
-  bctx.filter = `blur(${Math.max(1, (s/100)*6)}px)`;
+  bctx.filter = `blur(${Math.max(1, (s / 100) * 6)}px)`;
   bctx.drawImage(cvs, 0, 0); bctx.filter = 'none';
 
   const ctx = cvs.getContext('2d');
@@ -171,9 +225,9 @@ function beautify(cvs) {
   if (b > 0) {
     const d = ctx.getImageData(0, 0, w, h).data;
     for (let i = 0; i < d.length; i += 4) {
-      d[i] = Math.min(255, d[i] * (1 + b/150));
-      d[i+1] = Math.min(255, d[i+1] * (1 + b/150));
-      d[i+2] = Math.min(255, d[i+2] * (1 + b/150));
+      d[i] = Math.min(255, d[i] * (1 + b / 150));
+      d[i + 1] = Math.min(255, d[i + 1] * (1 + b / 150));
+      d[i + 2] = Math.min(255, d[i + 2] * (1 + b / 150));
     }
     ctx.putImageData(new ImageData(d, w, h), 0, 0);
   }
@@ -192,41 +246,44 @@ async function procOne(file) {
   };
 
   try {
+    // 1. Load & shrink
     up(5); const img = await loadImg(file);
+    up(8); const srcCvs = shrink(img, 1080); // AI input ≤1080px
 
-    // Shrink for AI (1080px max → fast)
-    up(8); const srcCvs = shrink(img, 1080);
-
-    // AI background removal
-    let fgImg = img;
+    // 2. AI background removal → RGBA PNG
+    let rgbaCvs = null;
     if (rmBg) {
       up(12);
       const jpg = await toJpg(srcCvs);
       try {
-        const r = await rmBg(jpg, { model: 'isnet_quint8', output: { format: 'image/png' } });
-        fgImg = await loadImg(r);
+        const blob = await rmBg(jpg, { model: 'isnet_quint8', output: { format: 'image/png' } });
+        const fgImg = await loadImg(blob);
+
+        // Draw RGBA PNG onto canvas (preserving alpha channel!)
+        const cvs = document.createElement('canvas');
+        cvs.width = fgImg.naturalWidth || fgImg.width;
+        cvs.height = fgImg.naturalHeight || fgImg.height;
+        cvs.getContext('2d').drawImage(fgImg, 0, 0);
+        rgbaCvs = cvs;
       } catch (e) { console.warn('AI fail:', e.message); }
     }
 
-    // Compose onto white background (at AI output resolution)
-    up(40);
-    const fw = fgImg.naturalWidth || fgImg.width, fh = fgImg.naturalHeight || fgImg.height;
-    const bgCvs = document.createElement('canvas'); bgCvs.width = fw; bgCvs.height = fh;
-    const bgCtx = bgCvs.getContext('2d');
-    bgCtx.fillStyle = '#FFF'; bgCtx.fillRect(0, 0, fw, fh);
-    bgCtx.drawImage(fgImg, 0, 0);
-    // First-pass background clean on the source
-    cleanBg(bgCvs);
+    // Fallback: no AI → just the shrunk image
+    if (!rgbaCvs) { rgbaCvs = srcCvs; }
+
+    // 3. Apply alpha mask → pure white background
+    up(35);
+    applyAlphaMask(rgbaCvs, 200);
     up(50);
 
-    // === Badge: top 55% of body, 12% top margin ===
-    const badgeCvs = compose(bgCvs, 0.55, parseFloat(E.bTM.value));
+    // 4. Compose badge (top 55% of body, ~12% margin)
+    const badgeCvs = compose(rgbaCvs, 0.55, parseFloat(E.bTM.value));
     beautify(badgeCvs);
     const badgeBlob = await toJpg(badgeCvs);
     up(75);
 
-    // === Desk plate: top 68% of body, 5% top margin ===
-    const plateCvs = compose(bgCvs, 0.68, parseFloat(E.pTM.value));
+    // 5. Compose desk plate (top 68% of body, ~5% margin)
+    const plateCvs = compose(rgbaCvs, 0.68, parseFloat(E.pTM.value));
     beautify(plateCvs);
     const plateBlob = await toJpg(plateCvs);
     up(100, 'done');
@@ -252,9 +309,7 @@ E.proc.onclick = async () => {
   E.progSec.style.display = 'block'; E.resSec.style.display = 'none'; E.zip.style.display = 'none';
   E.progL.innerHTML = ''; upBtn();
   E.proc.textContent = '⏳ 处理中...'; E.proc.disabled = true;
-
   for (const f of S.files) S.results.push(await procOne(f.file));
-
   renderR();
   E.resSec.style.display = 'block';
   E.zip.style.display = S.results.some(r => !r.error) ? 'inline-flex' : 'none';
@@ -268,8 +323,8 @@ function renderR() {
     return `<div class="result-card">
       <div class="card-header"><span>${esc(r.name)}</span><span style="color:var(--success);font-size:12px">✓</span></div>
       <div class="card-body"><div class="preview-pair">
-        <div class="preview-item"><img src="${bu}" alt="工牌照" loading="lazy"><div class="label">工牌照（胸口）</div></div>
-        <div class="preview-item"><img src="${pu}" alt="座位牌" loading="lazy"><div class="label">座位牌（手臂下）</div></div>
+        <div class="preview-item"><img src="${bu}" alt="工牌照" loading="lazy"><div class="label">工牌照</div></div>
+        <div class="preview-item"><img src="${pu}" alt="座位牌" loading="lazy"><div class="label">座位牌</div></div>
       </div></div>
       <div class="card-actions">
         <button class="btn btn-outline btn-sm dl" data-i="${i}" data-t="badge">⬇ 工牌照</button>
