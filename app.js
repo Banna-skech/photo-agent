@@ -1,267 +1,299 @@
 /**
- * 员工照片批量处理工具 — 纯浏览器端
+ * 员工照片批量处理 — 纯浏览器版
+ *
+ * 参数依据：0702/0717 批次 70+ 张参考照片的像素级分析
+ * 工牌照: 人像填满 ~87% 高度, 上边距 ~12%, 显示头部到胸口
+ * 座位牌: 人像填满 ~93% 高度, 上边距 ~5%,  显示头部到手臂下方
  */
-const CANVAS_W = 1080, CANVAS_H = 1440, JPEG_Q = 0.92;
+const CW = 1080, CH = 1440, JQ = 0.92;
 
 // ====== DOM ======
-const $ = (s) => document.querySelector(s);
-const uploadZone = $('#uploadZone'), fileInput = $('#fileInput');
-const fileListSection = $('#fileListSection'), fileList = $('#fileList'), fileCount = $('#fileCount');
-const processBtn = $('#processBtn'), downloadZipBtn = $('#downloadZipBtn');
-const engineStatus = $('#engineStatus'), progressSection = $('#progressSection');
-const progressList = $('#progressList'), resultsSection = $('#resultsSection'), resultsGrid = $('#resultsGrid');
-const badgeTM = $('#badgeTopMargin'), plateTM = $('#plateTopMargin');
-const smoothEl = $('#smoothStrength'), brightEl = $('#brightness');
-const badgeTMV = $('#badgeTopMarginVal'), plateTMV = $('#plateTopMarginVal');
-const smoothV = $('#smoothStrengthVal'), brightV = $('#brightnessVal');
+const $ = s => document.querySelector(s);
+const E = {
+  upZone: $('#uploadZone'),    fInp: $('#fileInput'),
+  flSec: $('#fileListSection'), fl: $('#fileList'), fc: $('#fileCount'),
+  proc: $('#processBtn'),      zip: $('#downloadZipBtn'),
+  eng: $('#engineStatus'),     progSec: $('#progressSection'), progL: $('#progressList'),
+  resSec: $('#resultsSection'), resG: $('#resultsGrid'),
+  bTM: $('#badgeTopMargin'),   pTM: $('#plateTopMargin'),
+  sm: $('#smoothStrength'),    br: $('#brightness'),
+  bTMv: $('#badgeTopMarginVal'), pTMv: $('#plateTopMarginVal'),
+  smv: $('#smoothStrengthVal'), brv: $('#brightnessVal'),
+};
 
-// ====== State ======
-const state = { files: [], results: [], processing: false };
-let removeBgFn = null;
+const S = { files: [], results: [], busy: false };
+let rmBg = null;
 
-// ====== Settings ======
-[{el: badgeTM, v: badgeTMV}, {el: plateTM, v: plateTMV},
- {el: smoothEl, v: smoothV}, {el: brightEl, v: brightV}]
-  .forEach(({el, v}) => { el.oninput = () => v.textContent = el.value + '%'; });
+// ====== Settings sliders ======
+[{e: E.bTM, v: E.bTMv},{e: E.pTM, v: E.pTMv},{e: E.sm, v: E.smv},{e: E.br, v: E.brv}]
+  .forEach(x => { x.e.oninput = () => x.v.textContent = x.e.value + '%'; });
 
-// ====== Engine ======
+// ====== AI Engine ======
 (async () => {
   try {
     const m = await import('@imgly/background-removal');
-    removeBgFn = m.removeBackground || m.default;
-    engineStatus.innerHTML = '<span class="status-dot ready"></span><span>AI 抠图引擎就绪</span>';
+    rmBg = m.removeBackground || m.default;
+    E.eng.innerHTML = '<span class="status-dot ready"></span>AI 抠图引擎就绪';
   } catch (e) {
-    engineStatus.innerHTML = '<span class="status-dot ready" style="background:var(--warning)"></span><span>AI 不可用，跳过抠图</span><span class="status-hint">需白底原图</span>';
+    E.eng.innerHTML = '<span class="status-dot ready" style="background:var(--warning)"></span>AI 不可用（需白底原图）';
   }
-  updateBtn();
+  upBtn();
 })();
 
-function updateBtn() {
-  processBtn.disabled = state.files.length === 0 || state.processing;
-  processBtn.textContent = state.files.length ? `🚀 开始处理 (${state.files.length} 张)` : '🚀 开始处理';
+function upBtn() {
+  E.proc.disabled = !S.files.length || S.busy;
+  E.proc.textContent = S.files.length ? `🚀 开始处理 (${S.files.length} 张)` : '🚀 开始处理';
 }
 
 // ====== File management ======
-function addFiles(files) {
-  for (const f of files) {
+function addFiles(fs) {
+  for (const f of fs) {
     if (!f.type.startsWith('image/') && !/\.(heic|heif)$/i.test(f.name)) continue;
-    if (state.files.some(x => x.name === f.name)) continue;
-    state.files.push({ name: f.name, file: f });
+    if (S.files.some(x => x.name === f.name)) continue;
+    S.files.push({ name: f.name, file: f });
   }
-  if (state.files.length) { fileListSection.style.display = 'block'; renderFiles(); }
-  updateBtn();
+  if (S.files.length) { E.flSec.style.display = 'block'; renderF(); }
+  upBtn();
 }
-function removeFile(i) {
-  state.files.splice(i, 1);
-  if (!state.files.length) fileListSection.style.display = 'none';
-  renderFiles(); updateBtn();
-}
-function renderFiles() {
-  fileCount.textContent = state.files.length + ' 张';
-  fileList.innerHTML = state.files.map((f, i) =>
-    `<div class="file-tag"><span>${esc(f.name)}</span><button class="remove-btn" data-i="${i}">×</button></div>`
-  ).join('');
-  fileList.querySelectorAll('.remove-btn').forEach(b => b.onclick = e => { e.stopPropagation(); removeFile(+b.dataset.i); });
+function rmF(i) { S.files.splice(i,1); if(!S.files.length)E.flSec.style.display='none'; renderF(); upBtn(); }
+function renderF() {
+  E.fc.textContent = S.files.length + ' 张';
+  E.fl.innerHTML = S.files.map((f,i) =>
+    `<div class="file-tag"><span>${esc(f.name)}</span><button class="rm" data-i="${i}">×</button></div>`).join('');
+  E.fl.querySelectorAll('.rm').forEach(b => b.onclick = e => { e.stopPropagation(); rmF(+b.dataset.i); });
 }
 
-uploadZone.onclick = () => fileInput.click();
-fileInput.onchange = () => addFiles(fileInput.files);
-uploadZone.ondragover = e => { e.preventDefault(); uploadZone.classList.add('drag-over'); };
-uploadZone.ondragleave = () => uploadZone.classList.remove('drag-over');
-uploadZone.ondrop = e => { e.preventDefault(); uploadZone.classList.remove('drag-over'); addFiles(e.dataTransfer.files); };
+E.upZone.onclick = () => E.fInp.click();
+E.fInp.onchange = () => addFiles(E.fInp.files);
+E.upZone.ondragover = e => { e.preventDefault(); E.upZone.classList.add('drag-over'); };
+E.upZone.ondragleave = () => E.upZone.classList.remove('drag-over');
+E.upZone.ondrop = e => { e.preventDefault(); E.upZone.classList.remove('drag-over'); addFiles(e.dataTransfer.files); };
 $('#clearFiles').onclick = () => {
-  state.files = []; state.results = [];
-  fileListSection.style.display = 'none'; progressSection.style.display = 'none';
-  resultsSection.style.display = 'none'; downloadZipBtn.style.display = 'none';
-  renderFiles(); updateBtn();
+  S.files=[]; S.results=[]; E.flSec.style.display='none'; E.progSec.style.display='none';
+  E.resSec.style.display='none'; E.zip.style.display='none'; renderF(); upBtn();
 };
 
 // ====== Image utils ======
-function loadImg(blob) { return new Promise((ok, fail) => { const i = new Image(); i.onload = () => ok(i); i.onerror = fail; i.src = URL.createObjectURL(blob); }); }
-function toJpeg(cvs) { return new Promise(ok => cvs.toBlob(ok, 'image/jpeg', JPEG_Q)); }
+function loadImg(b) { return new Promise((ok,er) => { const i=new Image(); i.onload=()=>ok(i); i.onerror=er; i.src=URL.createObjectURL(b); }); }
+function toJpg(c) { return new Promise(ok => c.toBlob(ok,'image/jpeg',JQ)); }
 
 function shrink(img, max) {
-  const w = img.naturalWidth || img.width, h = img.naturalHeight || img.height;
-  if (Math.max(w, h) <= max) { const c = document.createElement('canvas'); c.width = w; c.height = h; c.getContext('2d').drawImage(img, 0, 0); return c; }
-  const s = max / Math.max(w, h);
-  const c = document.createElement('canvas'); c.width = Math.round(w * s); c.height = Math.round(h * s);
-  c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
-  return c;
-}
-
-// ====== Fast beautify on 1080x1440 canvas ======
-function beautify(canvas) {
-  const smooth = parseInt(smoothEl.value), bright = parseInt(brightEl.value);
-  if (smooth <= 0 && bright <= 0) return;
-  const w = canvas.width, h = canvas.height;
-
-  // blur layer
-  const blur = document.createElement('canvas'); blur.width = w; blur.height = h;
-  const bctx = blur.getContext('2d');
-  bctx.filter = `blur(${Math.max(1, (smooth / 100) * 6)}px)`;
-  bctx.drawImage(canvas, 0, 0); bctx.filter = 'none';
-
-  // blend
-  const ctx = canvas.getContext('2d');
-  ctx.globalAlpha = smooth / 100; ctx.drawImage(blur, 0, 0); ctx.globalAlpha = 1;
-
-  // whitening — operate on final small canvas (fast)
-  if (bright > 0) {
-    const d = ctx.getImageData(0, 0, w, h).data;
-    for (let i = 0; i < d.length; i += 4) {
-      d[i] = Math.min(255, d[i] * (1 + bright / 150));
-      d[i + 1] = Math.min(255, d[i + 1] * (1 + bright / 150));
-      d[i + 2] = Math.min(255, d[i + 2] * (1 + bright / 150));
-    }
-    ctx.putImageData(new ImageData(d, w, h), 0, 0);
+  const w=img.naturalWidth||img.width, h=img.naturalHeight||img.height;
+  if (Math.max(w,h) <= max) {
+    const c=document.createElement('canvas'); c.width=w; c.height=h; c.getContext('2d').drawImage(img,0,0); return c;
   }
+  const s = max/Math.max(w,h);
+  const c=document.createElement('canvas'); c.width=Math.round(w*s); c.height=Math.round(h*s);
+  c.getContext('2d').drawImage(img,0,0,c.width,c.height); return c;
 }
 
-// ====== Compose photo onto 1080x1440 canvas ======
-function compose(srcCanvas, topPct) {
-  // Fast content-bound scan (coarse step)
+// ====== Clean background: kill gray artifacts from AI model ======
+function cleanBg(canvas) {
+  const ctx = canvas.getContext('2d');
+  const d = ctx.getImageData(0, 0, canvas.width, canvas.height).data;
+  const out = new Uint8ClampedArray(d.length);
+  for (let i = 0; i < d.length; i += 4) {
+    if (d[i] > 238 && d[i+1] > 238 && d[i+2] > 238) {
+      // near-white → pure white (kills gray specks without touching skin)
+      out[i] = 255; out[i+1] = 255; out[i+2] = 255; out[i+3] = 255;
+    } else {
+      out[i] = d[i]; out[i+1] = d[i+1]; out[i+2] = d[i+2]; out[i+3] = 255;
+    }
+  }
+  ctx.putImageData(new ImageData(out, canvas.width, canvas.height), 0, 0);
+}
+
+// ====== Compose: crop person to body portion, scale to fill canvas ======
+// bodyPct: what portion of the person to show (0.55=chest, 0.68=below arms)
+// topPct:  top margin as % of canvas height
+function compose(srcCanvas, bodyPct, topPct) {
   const ctx = srcCanvas.getContext('2d');
   const w = srcCanvas.width, h = srcCanvas.height;
   const step = Math.max(4, Math.min(w, h) >> 7);
-  const data = ctx.getImageData(0, 0, w, h).data;
+  const raw = ctx.getImageData(0, 0, w, h).data;
+
+  // Find person bounds
   let L = w, T = h, R = 0, B = 0;
   for (let y = 0; y < h; y += step) {
     for (let x = 0; x < w; x += step) {
       const i = (y * w + x) * 4;
-      if (data[i] < 245 || data[i + 1] < 245 || data[i + 2] < 245) {
+      if (raw[i] < 245 || raw[i+1] < 245 || raw[i+2] < 245) {
         if (x < L) L = x; if (y < T) T = y;
         if (x > R) R = x; if (y > B) B = y;
       }
     }
   }
-  if (R <= L || B <= T) { L = 0; T = 0; R = w - 1; B = h - 1; }
-  const pw = R - L + 1, ph = B - T + 1;
+  if (R <= L) { L = 0; T = 0; R = w-1; B = h-1; }
+  const pw = R - L + 1;
+  const ph = B - T + 1;
 
-  // Scale: target width = 60% of canvas
-  let scale = (CANVAS_W * 0.6) / pw, scaledW = pw * scale | 0, scaledH = ph * scale | 0;
-  let top = (CANVAS_H * topPct / 100) | 0, left = ((CANVAS_W - scaledW) / 2) | 0;
-  if (top + scaledH > CANVAS_H) { scale = (CANVAS_H - top) / ph; scaledW = pw * scale | 0; scaledH = ph * scale | 0; left = ((CANVAS_W - scaledW) / 2) | 0; }
-  if (left < 0) left = 0;
+  // Crop to top bodyPct of the person height
+  const cropH = Math.round(ph * bodyPct);
 
-  const out = document.createElement('canvas'); out.width = CANVAS_W; out.height = CANVAS_H;
+  // Scale: person fills 87-93% of canvas height
+  const targetH = CH * (bodyPct > 0.65 ? 0.93 : 0.87);
+  const scale = targetH / cropH;
+  const drawW = Math.round(pw * scale);
+  const drawH = Math.round(cropH * scale);
+
+  // Position
+  let drawX = Math.round((CW - drawW) / 2);
+  let drawY = Math.round(CH * topPct / 100);
+  if (drawX < 0) drawX = 0;
+  if (drawY + drawH > CH) drawY = CH - drawH;
+  if (drawY < 0) drawY = 0;
+
+  const out = document.createElement('canvas'); out.width = CW; out.height = CH;
   const octx = out.getContext('2d');
-  octx.fillStyle = '#FFF'; octx.fillRect(0, 0, CANVAS_W, CANVAS_H);
-  octx.drawImage(srcCanvas, L, T, pw, ph, left, top, scaledW, scaledH);
+  octx.fillStyle = '#FFF'; octx.fillRect(0, 0, CW, CH);
+  octx.drawImage(srcCanvas, L, T, pw, cropH, drawX, drawY, drawW, drawH);
+
+  // Clean background artifacts
+  cleanBg(out);
   return out;
 }
 
-// ====== Process one photo ======
-async function processOne(file) {
+// ====== Beautify on final 1080x1440 canvas ======
+function beautify(cvs) {
+  const s = parseInt(E.sm.value), b = parseInt(E.br.value);
+  if (s <= 0 && b <= 0) return;
+  const w = cvs.width, h = cvs.height;
+
+  // blur layer
+  const bl = document.createElement('canvas'); bl.width = w; bl.height = h;
+  const bctx = bl.getContext('2d');
+  bctx.filter = `blur(${Math.max(1, (s/100)*6)}px)`;
+  bctx.drawImage(cvs, 0, 0); bctx.filter = 'none';
+
+  const ctx = cvs.getContext('2d');
+  ctx.globalAlpha = s / 100; ctx.drawImage(bl, 0, 0); ctx.globalAlpha = 1;
+
+  if (b > 0) {
+    const d = ctx.getImageData(0, 0, w, h).data;
+    for (let i = 0; i < d.length; i += 4) {
+      d[i] = Math.min(255, d[i] * (1 + b/150));
+      d[i+1] = Math.min(255, d[i+1] * (1 + b/150));
+      d[i+2] = Math.min(255, d[i+2] * (1 + b/150));
+    }
+    ctx.putImageData(new ImageData(d, w, h), 0, 0);
+  }
+}
+
+// ====== Process one ======
+async function procOne(file) {
   const name = file.name.replace(/\.(jpg|jpeg|png|heic|heif|webp)$/i, '');
-  const pi = createProgress(name);
-  const up = (pct, status) => {
-    const fill = pi.querySelector('.progress-bar-fill'), icon = pi.querySelector('.status-icon');
-    fill.style.width = pct + '%';
-    if (status === 'done') { fill.classList.add('done'); icon.textContent = '✓'; }
-    if (status === 'error') { fill.classList.add('error'); icon.textContent = '✗'; }
+  const pi = mkProg(name);
+  const up = (pct, st) => {
+    const f = pi.querySelector('.progress-bar-fill'), ic = pi.querySelector('.status-icon');
+    f.style.width = pct + '%';
+    if (st === 'done') { f.classList.add('done'); ic.textContent = '✓'; }
+    if (st === 'err') { f.classList.add('error'); ic.textContent = '✗'; }
     pi.querySelector('.progress-pct').textContent = pct + '%';
   };
 
   try {
     up(5); const img = await loadImg(file);
-    up(10); const src = shrink(img, 1080); // AI 抠图只需要 1080px 输入
 
+    // Shrink for AI (1080px max → fast)
+    up(8); const srcCvs = shrink(img, 1080);
+
+    // AI background removal
     let fgImg = img;
-    if (removeBgFn) {
-      up(15);
-      const jpg = await toJpeg(src); // 小体积 Blob 传给 AI
+    if (rmBg) {
+      up(12);
+      const jpg = await toJpg(srcCvs);
       try {
-        const r = await removeBgFn(jpg, { model: 'isnet_quint8', output: { format: 'image/png' } });
+        const r = await rmBg(jpg, { model: 'isnet_quint8', output: { format: 'image/png' } });
         fgImg = await loadImg(r);
       } catch (e) { console.warn('AI fail:', e.message); }
     }
+
+    // Compose onto white background (at AI output resolution)
+    up(40);
+    const fw = fgImg.naturalWidth || fgImg.width, fh = fgImg.naturalHeight || fgImg.height;
+    const bgCvs = document.createElement('canvas'); bgCvs.width = fw; bgCvs.height = fh;
+    const bgCtx = bgCvs.getContext('2d');
+    bgCtx.fillStyle = '#FFF'; bgCtx.fillRect(0, 0, fw, fh);
+    bgCtx.drawImage(fgImg, 0, 0);
+    // First-pass background clean on the source
+    cleanBg(bgCvs);
     up(50);
 
-    // 白底合成（AI输出分辨率）
-    const fgw = fgImg.naturalWidth || fgImg.width, fgh = fgImg.naturalHeight || fgImg.height;
-    const bg = document.createElement('canvas'); bg.width = fgw; bg.height = fgh;
-    const bgctx = bg.getContext('2d');
-    bgctx.fillStyle = '#FFF'; bgctx.fillRect(0, 0, fgw, fgh);
-    bgctx.drawImage(fgImg, 0, 0);
-    up(55);
-
-    // 合成 → 1080×1440
-    const badge = compose(bg, parseFloat(badgeTM.value));
-    // 在最终小画布上做美容（极快）
-    beautify(badge);
+    // === Badge: top 55% of body, 12% top margin ===
+    const badgeCvs = compose(bgCvs, 0.55, parseFloat(E.bTM.value));
+    beautify(badgeCvs);
+    const badgeBlob = await toJpg(badgeCvs);
     up(75);
-    const badgeBlob = await toJpeg(badge);
 
-    const plate = compose(bg, parseFloat(plateTM.value));
-    beautify(plate);
-    up(90);
-    const plateBlob = await toJpeg(plate);
+    // === Desk plate: top 68% of body, 5% top margin ===
+    const plateCvs = compose(bgCvs, 0.68, parseFloat(E.pTM.value));
+    beautify(plateCvs);
+    const plateBlob = await toJpg(plateCvs);
     up(100, 'done');
 
     return { name, badgeBlob, plateBlob, error: null };
   } catch (e) {
     console.error(name, e);
-    up(100, 'error');
+    up(100, 'err');
     return { name, badgeBlob: null, plateBlob: null, error: e.message };
   }
 }
 
-function createProgress(name) {
+function mkProg(name) {
   const d = document.createElement('div'); d.className = 'progress-item';
   d.innerHTML = `<div class="progress-label"><span>${esc(name)}</span><span><span class="status-icon">⏳</span> <span class="progress-pct">0%</span></span></div><div class="progress-bar-bg"><div class="progress-bar-fill" style="width:0%"></div></div>`;
-  progressList.appendChild(d);
-  return d;
+  E.progL.appendChild(d); return d;
 }
 
 // ====== Batch ======
-processBtn.onclick = async () => {
-  if (state.processing || !state.files.length) return;
-  state.processing = true; state.results = [];
-  progressSection.style.display = 'block'; resultsSection.style.display = 'none';
-  downloadZipBtn.style.display = 'none'; progressList.innerHTML = '';
-  updateBtn(); processBtn.textContent = '⏳ 处理中...'; processBtn.disabled = true;
+E.proc.onclick = async () => {
+  if (S.busy || !S.files.length) return;
+  S.busy = true; S.results = [];
+  E.progSec.style.display = 'block'; E.resSec.style.display = 'none'; E.zip.style.display = 'none';
+  E.progL.innerHTML = ''; upBtn();
+  E.proc.textContent = '⏳ 处理中...'; E.proc.disabled = true;
 
-  for (const f of state.files) state.results.push(await processOne(f.file));
+  for (const f of S.files) S.results.push(await procOne(f.file));
 
-  renderResults();
-  resultsSection.style.display = 'block';
-  downloadZipBtn.style.display = state.results.some(r => !r.error) ? 'inline-flex' : 'none';
-  state.processing = false; updateBtn();
+  renderR();
+  E.resSec.style.display = 'block';
+  E.zip.style.display = S.results.some(r => !r.error) ? 'inline-flex' : 'none';
+  S.busy = false; upBtn();
 };
 
-function renderResults() {
-  resultsGrid.innerHTML = state.results.map((r, i) => {
+function renderR() {
+  E.resG.innerHTML = S.results.map((r, i) => {
     if (r.error) return `<div class="result-card"><div class="card-header">${esc(r.name)} <span style="color:var(--danger)">失败</span></div><div class="card-body"><p style="color:var(--gray-500);font-size:13px">${esc(r.error)}</p></div></div>`;
     const bu = URL.createObjectURL(r.badgeBlob), pu = URL.createObjectURL(r.plateBlob);
     return `<div class="result-card">
       <div class="card-header"><span>${esc(r.name)}</span><span style="color:var(--success);font-size:12px">✓</span></div>
       <div class="card-body"><div class="preview-pair">
-        <div class="preview-item"><img src="${bu}" alt="工牌照" loading="lazy"><div class="label">工牌照</div></div>
-        <div class="preview-item"><img src="${pu}" alt="座位牌" loading="lazy"><div class="label">座位牌</div></div>
+        <div class="preview-item"><img src="${bu}" alt="工牌照" loading="lazy"><div class="label">工牌照（胸口）</div></div>
+        <div class="preview-item"><img src="${pu}" alt="座位牌" loading="lazy"><div class="label">座位牌（手臂下）</div></div>
       </div></div>
       <div class="card-actions">
         <button class="btn btn-outline btn-sm dl" data-i="${i}" data-t="badge">⬇ 工牌照</button>
         <button class="btn btn-outline btn-sm dl" data-i="${i}" data-t="plate">⬇ 座位牌</button>
       </div></div>`;
   }).join('');
-  resultsGrid.querySelectorAll('.dl').forEach(b => b.onclick = () => {
-    const r = state.results[+b.dataset.i];
-    download(r[b.dataset.t === 'badge' ? 'badgeBlob' : 'plateBlob'], `${r.name}-${b.dataset.t === 'badge' ? '工牌照' : '座位牌'}.jpg`);
+  E.resG.querySelectorAll('.dl').forEach(b => b.onclick = () => {
+    const r = S.results[+b.dataset.i], t = b.dataset.t;
+    download(r[t === 'badge' ? 'badgeBlob' : 'plateBlob'], `${r.name}-${t === 'badge' ? '工牌照' : '座位牌'}.jpg`);
   });
 }
 
 // ====== ZIP ======
-downloadZipBtn.onclick = async () => {
-  const ok = state.results.filter(r => !r.error);
+E.zip.onclick = async () => {
+  const ok = S.results.filter(r => !r.error);
   if (!ok.length) return;
-  downloadZipBtn.textContent = '⏳ 打包中...'; downloadZipBtn.disabled = true;
+  E.zip.textContent = '⏳ 打包中...'; E.zip.disabled = true;
   const zip = new JSZip();
   const bf = zip.folder('工牌照'), pf = zip.folder('座位牌');
   for (const r of ok) { bf.file(`${r.name}-工牌照.jpg`, r.badgeBlob); pf.file(`${r.name}-座位牌.jpg`, r.plateBlob); }
   const blob = await zip.generateAsync({ type: 'blob' });
   const d = new Date();
   download(blob, `员工照片_${d.getFullYear()}${('0'+(d.getMonth()+1)).slice(-2)}${('0'+d.getDate()).slice(-2)}.zip`);
-  downloadZipBtn.textContent = '📦 下载全部 (ZIP)'; downloadZipBtn.disabled = false;
+  E.zip.textContent = '📦 下载全部 (ZIP)'; E.zip.disabled = false;
 };
 
 function download(blob, name) {
