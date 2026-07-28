@@ -89,10 +89,12 @@ function personBounds(cvs){
  * ★ 合成到 1080×1440 画布
  *
  * bodyCrop: 裁取人像前多少比例（0.55=胸口, 0.75=腰, 0.85=到大腿）
- * marginPx: 四边留白像素（参考 ≈ 180-200px 上边距）
+ * topMarginPx: 头顶最小留白像素
+ * lrMarginPx: 左右留白像素
  *
- * 缩放逻辑：让人像宽度填满 (1080-2*margin) 后的剩余空间，
- * 然后按比例缩放。如果高度超出，按高度约束缩放。
+ * 缩放逻辑：宽度优先填满，高度如果超出画布则收。
+ * ★ 底部锚定：drawY = CH - drawH，让人物底部贴着画布底边，
+ *   多余空间自然留在头顶，避免"悬空"。
  */
 function compose(srcCvs, bodyCrop, topMarginPx, lrMarginPx){
   const b=personBounds(srcCvs),pw=b.pw,ph=b.ph;
@@ -100,19 +102,20 @@ function compose(srcCvs, bodyCrop, topMarginPx, lrMarginPx){
 
   // 可用区域 = 画布减去四边留白
   const availW=CW-2*lrMarginPx;
-  const availH=CH-topMarginPx; // 下方尽量贴底（参考中下边距≈2px）
+  const minTop=Math.round(CH*0.02); // 最小头顶留白 ~2%
 
   // 先按宽度适配
   let scale=availW/pw;
   let drawW=Math.round(pw*scale),drawH=Math.round(cropH*scale);
 
-  // 如果高度超出可用区域再收
-  if(drawH>availH){scale=availH/cropH;drawW=Math.round(pw*scale);drawH=availH;}
+  // 如果高度超出画布再收
+  if(drawH>CH-minTop){scale=(CH-minTop)/cropH;drawW=Math.round(pw*scale);drawH=CH-minTop;}
 
   let drawX=Math.round((CW-drawW)/2);
-  let drawY=Math.round(topMarginPx);
+  // ★ 底部锚定：人物底部贴着画布底边，多余空间留在头顶
+  let drawY=CH-drawH;
+  if(drawY<topMarginPx)drawY=topMarginPx;
   if(drawX<0)drawX=0;
-  if(drawY+drawH>CH)drawY=CH-drawH;
 
   const out=document.createElement('canvas');out.width=CW;out.height=CH;
   const o=out.getContext('2d');
