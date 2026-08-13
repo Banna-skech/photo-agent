@@ -65,6 +65,27 @@ body {
 .upload-text { font-size: 16px; color: var(--gray-700); }
 .upload-hint { font-size: 13px; color: var(--gray-400); margin-top: 6px; }
 
+/* ====== Output Specs ====== */
+.spec-section {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 10px;
+  margin-bottom: 20px;
+}
+.spec-item {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 12px 14px;
+  background: white;
+  border: 1px solid var(--gray-200);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  font-size: 12px;
+  color: var(--gray-500);
+}
+.spec-item strong { color: var(--gray-800); font-size: 13px; }
+
 /* ====== File List ====== */
 .file-list-section {
   background: white;
@@ -260,6 +281,7 @@ body {
   border: 1px solid var(--gray-200);
 }
 .result-card .preview-item .label { font-size: 11px; color: var(--gray-500); margin-top: 4px; }
+.error-message { color: var(--danger); font-size: 13px; }
 .result-card .card-actions { display: flex; gap: 6px; padding: 0 14px 14px; }
 .result-card .card-actions .btn { flex: 1; justify-content: center; font-size: 12px; padding: 6px 10px; }
 
@@ -278,6 +300,7 @@ body {
 @media (max-width: 640px) {
   .header h1 { font-size: 22px; }
   .container { padding: 16px 12px 40px; }
+  .spec-section { grid-template-columns: 1fr; }
   .settings-grid { grid-template-columns: 1fr; }
   .results-grid { grid-template-columns: 1fr; }
   .action-bar { flex-direction: column; }

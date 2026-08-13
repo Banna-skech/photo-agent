@@ -4,7 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>员工照片批量处理工具</title>
-<link rel="stylesheet" href="style.css">
+<link rel="stylesheet" href="style.css?v=20260813-3">
 <script type="importmap">
 {
   "imports": {
@@ -18,7 +18,7 @@
 <!-- ====== 页头 ====== -->
 <header class="header">
   <h1>📸 员工照片批量处理</h1>
-  <p class="subtitle">上传原图 → AI 智能抠图 → 美白磨皮 → 工牌照 + 座位牌</p>
+  <p class="subtitle">上传原图 → AI 智能抠图 → 纯白底 → 厂家可用工牌照 + 座位牌</p>
 </header>
 
 <main class="container">
@@ -33,6 +33,12 @@
       <div class="upload-hint">支持 JPG / PNG / WebP / HEIC，可多选</div>
     </div>
     <input type="file" id="fileInput" multiple accept="image/*" hidden>
+  </section>
+
+  <section class="spec-section" aria-label="默认输出规格">
+    <div class="spec-item"><strong>工牌照</strong><span>1080×1440 · JPEG · 144 DPI</span></div>
+    <div class="spec-item"><strong>座位牌</strong><span>高 900px 动态宽度 · PNG · 144 DPI</span></div>
+    <div class="spec-item"><strong>背景</strong><span>RGB 纯白 #FFFFFF</span></div>
   </section>
 
   <!-- ====== 文件列表 ====== -->
@@ -53,32 +59,32 @@
         <div class="setting-item">
           <label>工牌照上边距</label>
           <div class="range-row">
-            <input type="range" id="badgeTopMargin" min="5" max="20" value="11" step="0.5">
-            <span class="range-val" id="badgeTopMarginVal">11%</span>
+            <input type="range" id="badgeTopMargin" min="8" max="16" value="12" step="0.5">
+            <span class="range-val" id="badgeTopMarginVal">12%</span>
           </div>
-          <span class="setting-desc">头顶留白，越大头像越小</span>
+          <span class="setting-desc">参考图默认 12%，通常无需修改</span>
         </div>
         <div class="setting-item">
           <label>座位牌上边距</label>
           <div class="range-row">
-            <input type="range" id="plateTopMargin" min="2" max="15" value="6" step="0.5">
-            <span class="range-val" id="plateTopMarginVal">6%</span>
+            <input type="range" id="plateTopMargin" min="5" max="12" value="8" step="0.5">
+            <span class="range-val" id="plateTopMarginVal">8%</span>
           </div>
-          <span class="setting-desc">更紧凑，展示更多身体</span>
+          <span class="setting-desc">参考图默认 8%，上半身裁至腰部</span>
         </div>
         <div class="setting-item">
           <label>磨皮强度</label>
           <div class="range-row">
-            <input type="range" id="smoothStrength" min="0" max="60" value="30" step="5">
-            <span class="range-val" id="smoothStrengthVal">30%</span>
+            <input type="range" id="smoothStrength" min="0" max="40" value="16" step="1">
+            <span class="range-val" id="smoothStrengthVal">16%</span>
           </div>
-          <span class="setting-desc">0=不磨皮，60=强磨皮</span>
+          <span class="setting-desc">低比例柔化，保留五官和衣服细节</span>
         </div>
         <div class="setting-item">
           <label>美白提亮</label>
           <div class="range-row">
-            <input type="range" id="brightness" min="0" max="15" value="6" step="1">
-            <span class="range-val" id="brightnessVal">6%</span>
+            <input type="range" id="brightness" min="0" max="10" value="3" step="1">
+            <span class="range-val" id="brightnessVal">3%</span>
           </div>
           <span class="setting-desc">数值越大肤色越亮</span>
         </div>
@@ -100,7 +106,7 @@
   <div class="engine-status" id="engineStatus">
     <span class="status-dot loading"></span>
     <span>AI 抠图引擎加载中...</span>
-    <span class="status-hint">首次加载需下载模型 (~4MB)，请耐心等待</span>
+    <span class="status-hint">首次打开需下载 AI 模型，请耐心等待</span>
   </div>
 
   <!-- ====== 处理进度 ====== -->
@@ -127,6 +133,6 @@
 <script src="https://cdn.jsdelivr.net/npm/jszip@3.10.1/dist/jszip.min.js"></script>
 
 <!-- App -->
-<script type="module" src="app.js"></script>
+<script type="module" src="app.js?v=20260813-3"></script>
 </body>
 </html>
