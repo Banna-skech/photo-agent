@@ -5,7 +5,7 @@
  *   ref_0702_badge、ref_0717_badge、ref_0702_plate、0624座位牌。
  *
  * 工牌照：1080×1440 JPEG / 144 DPI，人物高度约 88%，裁到下腰/胯部。
- * 座位牌：780×900 PNG / 144 DPI，按手臂外缘居中等量留白，裁到腰部。
+ * 座位牌：宽700-800×高900 PNG / 144 DPI，排除孤立噪点后按手臂外缘紧凑构图。
  */
 
 const SPEC = Object.freeze({
@@ -20,10 +20,12 @@ const SPEC = Object.freeze({
     quality: 0.95,
   },
   plate: {
-    width: 780,
     height: 900,
     bodyCropRatio: 0.72,
+    horizontalMarginPercent: 0.115,
     maxContentWidthPercent: 0.86,
+    minWidth: 700,
+    maxWidth: 800,
     format: 'image/png',
     extension: 'png',
   },
@@ -199,26 +201,70 @@ function personBounds(canvas, { region = null, alpha = false } = {}) {
   const endX = clamp(startX + Math.round(region?.width || width), startX + 1, width);
   const endY = clamp(startY + Math.round(region?.height || height), startY + 1, height);
   const step = Math.max(2, Math.floor(Math.min(width, height) / 500));
-  let left = endX;
-  let top = endY;
-  let right = -1;
-  let bottom = -1;
+  const gridWidth = Math.ceil((endX - startX) / step);
+  const gridHeight = Math.ceil((endY - startY) / step);
+  const cellCount = gridWidth * gridHeight;
+  const active = new Uint8Array(cellCount);
+  const visited = new Uint8Array(cellCount);
+  const queue = new Int32Array(cellCount);
 
-  for (let y = startY; y < endY; y += step) {
-    for (let x = startX; x < endX; x += step) {
+  for (let gy = 0; gy < gridHeight; gy += 1) {
+    const y = Math.min(endY - 1, startY + gy * step);
+    for (let gx = 0; gx < gridWidth; gx += 1) {
+      const x = Math.min(endX - 1, startX + gx * step);
       const offset = (y * width + x) * 4;
       const isContent = alpha
         ? data[offset + 3] > 20
         : data[offset] < 245 || data[offset + 1] < 245 || data[offset + 2] < 245;
-      if (!isContent) continue;
-      left = Math.min(left, x);
-      top = Math.min(top, y);
-      right = Math.max(right, x);
-      bottom = Math.max(bottom, y);
+      if (isContent) active[gy * gridWidth + gx] = 1;
     }
   }
 
-  if (right <= left || bottom <= top) throw new Error('未检测到有效人像，请换一张人物清晰的原图');
+  let best = null;
+  for (let start = 0; start < cellCount; start += 1) {
+    if (!active[start] || visited[start]) continue;
+    let head = 0;
+    let tail = 0;
+    let count = 0;
+    let minGX = gridWidth;
+    let minGY = gridHeight;
+    let maxGX = -1;
+    let maxGY = -1;
+    visited[start] = 1;
+    queue[tail++] = start;
+
+    while (head < tail) {
+      const cell = queue[head++];
+      const gx = cell % gridWidth;
+      const gy = Math.floor(cell / gridWidth);
+      count += 1;
+      minGX = Math.min(minGX, gx);
+      minGY = Math.min(minGY, gy);
+      maxGX = Math.max(maxGX, gx);
+      maxGY = Math.max(maxGY, gy);
+
+      for (let dy = -1; dy <= 1; dy += 1) {
+        const ny = gy + dy;
+        if (ny < 0 || ny >= gridHeight) continue;
+        for (let dx = -1; dx <= 1; dx += 1) {
+          const nx = gx + dx;
+          if ((dx === 0 && dy === 0) || nx < 0 || nx >= gridWidth) continue;
+          const next = ny * gridWidth + nx;
+          if (!active[next] || visited[next]) continue;
+          visited[next] = 1;
+          queue[tail++] = next;
+        }
+      }
+    }
+
+    if (!best || count > best.count) best = { count, minGX, minGY, maxGX, maxGY };
+  }
+
+  if (!best) throw new Error('未检测到有效人像，请换一张人物清晰的原图');
+  let left = startX + best.minGX * step;
+  let top = startY + best.minGY * step;
+  let right = Math.min(endX - 1, startX + (best.maxGX + 1) * step - 1);
+  let bottom = Math.min(endY - 1, startY + (best.maxGY + 1) * step - 1);
   const padX = alpha ? Math.max(step, Math.round((right - left + 1) * 0.02)) : step;
   const padY = alpha ? Math.max(step, Math.round((bottom - top + 1) * 0.02)) : step;
   left = Math.max(startX, left - padX);
@@ -275,7 +321,10 @@ function composePlate(source, bounds, plateBounds) {
   const targetHeight = Math.round(config.height * (1 - topMarginPercent));
   const cropHeight = Math.round(bounds.height * config.bodyCropRatio);
   const heightScale = targetHeight / cropHeight;
-  const widthScale = (config.width * config.maxContentWidthPercent) / plateBounds.width;
+  const heightPersonWidth = Math.max(1, Math.round(plateBounds.width * heightScale));
+  const idealCanvasWidth = Math.round(heightPersonWidth / (1 - 2 * config.horizontalMarginPercent));
+  const canvasWidth = clamp(idealCanvasWidth, config.minWidth, config.maxWidth);
+  const widthScale = (canvasWidth * config.maxContentWidthPercent) / plateBounds.width;
   const scale = Math.min(heightScale, widthScale);
   const personWidth = Math.max(1, Math.round(plateBounds.width * scale));
   const personHeight = Math.max(1, Math.round(cropHeight * scale));
@@ -287,13 +336,13 @@ function composePlate(source, bounds, plateBounds) {
   };
   const result = drawSubject(
     source, drawingBounds, config.bodyCropRatio,
-    config.width, config.height, personWidth, personHeight,
+    canvasWidth, config.height, personWidth, personHeight,
   );
-  const rightMargin = config.width - result.left - personWidth;
+  const rightMargin = canvasWidth - result.left - personWidth;
   return {
     canvas: result.canvas,
     layout: {
-      width: config.width,
+      width: canvasWidth,
       height: config.height,
       personWidth,
       personHeight,
@@ -538,11 +587,12 @@ async function processOne(file) {
     const plateMetadata = inspectPng(new Uint8Array(await plateBlob.arrayBuffer()));
     const expectedPixelsPerMeter = Math.round(SPEC.dpi / 0.0254);
     if (
-      plateMetadata.width !== SPEC.plate.width || plateMetadata.height !== SPEC.plate.height ||
+      plateMetadata.width !== plate.layout.width || plateMetadata.height !== SPEC.plate.height ||
       plateMetadata.colorType !== 2 || plateMetadata.physical?.unit !== 1 ||
       plateMetadata.physical.x !== expectedPixelsPerMeter || plateMetadata.physical.y !== expectedPixelsPerMeter
       || Math.abs(plate.layout.left - plate.layout.rightMargin) > 1
-      || plate.layout.personWidth > Math.round(SPEC.plate.width * SPEC.plate.maxContentWidthPercent) + 1
+      || plate.layout.width < SPEC.plate.minWidth || plate.layout.width > SPEC.plate.maxWidth
+      || plate.layout.personWidth > Math.round(plate.layout.width * SPEC.plate.maxContentWidthPercent) + 1
     ) {
       throw new Error('座位牌尺寸、RGB 通道或 144 DPI 元数据自检失败');
     }
