@@ -5,7 +5,7 @@
  *   ref_0702_badge、ref_0717_badge、ref_0702_plate、0624座位牌。
  *
  * 工牌照：1080×1440 JPEG / 144 DPI，人物高度约 88%，裁到下腰/胯部。
- * 座位牌：900px 高动态宽度 PNG / 144 DPI，人物高度约 92%，裁到腰部。
+ * 座位牌：780×900 PNG / 144 DPI，按手臂外缘居中等量留白，裁到腰部。
  */
 
 const SPEC = Object.freeze({
@@ -20,11 +20,10 @@ const SPEC = Object.freeze({
     quality: 0.95,
   },
   plate: {
+    width: 780,
     height: 900,
     bodyCropRatio: 0.72,
-    horizontalMarginPercent: 0.115,
-    minWidth: 650,
-    maxWidth: 1080,
+    maxContentWidthPercent: 0.86,
     format: 'image/png',
     extension: 'png',
   },
@@ -191,29 +190,41 @@ function flattenToWhite(foregroundCanvas) {
   return output;
 }
 
-function personBounds(canvas) {
+function personBounds(canvas, { region = null, alpha = false } = {}) {
   const context = canvas.getContext('2d', { willReadFrequently: true });
   const { width, height } = canvas;
   const data = context.getImageData(0, 0, width, height).data;
-  const step = Math.max(2, Math.floor(Math.min(width, height) / 400));
-  let left = width;
-  let top = height;
+  const startX = clamp(Math.round(region?.left || 0), 0, width - 1);
+  const startY = clamp(Math.round(region?.top || 0), 0, height - 1);
+  const endX = clamp(startX + Math.round(region?.width || width), startX + 1, width);
+  const endY = clamp(startY + Math.round(region?.height || height), startY + 1, height);
+  const step = Math.max(2, Math.floor(Math.min(width, height) / 500));
+  let left = endX;
+  let top = endY;
   let right = -1;
   let bottom = -1;
 
-  for (let y = 0; y < height; y += step) {
-    for (let x = 0; x < width; x += step) {
+  for (let y = startY; y < endY; y += step) {
+    for (let x = startX; x < endX; x += step) {
       const offset = (y * width + x) * 4;
-      if (data[offset] < 245 || data[offset + 1] < 245 || data[offset + 2] < 245) {
-        left = Math.min(left, x);
-        top = Math.min(top, y);
-        right = Math.max(right, x);
-        bottom = Math.max(bottom, y);
-      }
+      const isContent = alpha
+        ? data[offset + 3] > 20
+        : data[offset] < 245 || data[offset + 1] < 245 || data[offset + 2] < 245;
+      if (!isContent) continue;
+      left = Math.min(left, x);
+      top = Math.min(top, y);
+      right = Math.max(right, x);
+      bottom = Math.max(bottom, y);
     }
   }
 
   if (right <= left || bottom <= top) throw new Error('未检测到有效人像，请换一张人物清晰的原图');
+  const padX = alpha ? Math.max(step, Math.round((right - left + 1) * 0.02)) : step;
+  const padY = alpha ? Math.max(step, Math.round((bottom - top + 1) * 0.02)) : step;
+  left = Math.max(startX, left - padX);
+  top = Math.max(startY, top - padY);
+  right = Math.min(endX - 1, right + padX);
+  bottom = Math.min(endY - 1, bottom + padY);
   return {
     left,
     top,
@@ -258,26 +269,38 @@ function composeBadge(source, bounds) {
   };
 }
 
-function composePlate(source, bounds) {
+function composePlate(source, bounds, plateBounds) {
   const config = SPEC.plate;
   const topMarginPercent = Number(E.pTM.value) / 100;
   const targetHeight = Math.round(config.height * (1 - topMarginPercent));
   const cropHeight = Math.round(bounds.height * config.bodyCropRatio);
   const heightScale = targetHeight / cropHeight;
-  const idealPersonWidth = Math.round(bounds.width * heightScale);
-  const idealCanvasWidth = Math.round(idealPersonWidth / (1 - 2 * config.horizontalMarginPercent));
-  const canvasWidth = clamp(idealCanvasWidth, config.minWidth, config.maxWidth);
-  const maxPersonWidth = Math.round(canvasWidth * (1 - 2 * config.horizontalMarginPercent));
-  const scale = Math.min(heightScale, maxPersonWidth / bounds.width);
-  const personWidth = Math.max(1, Math.round(bounds.width * scale));
+  const widthScale = (config.width * config.maxContentWidthPercent) / plateBounds.width;
+  const scale = Math.min(heightScale, widthScale);
+  const personWidth = Math.max(1, Math.round(plateBounds.width * scale));
   const personHeight = Math.max(1, Math.round(cropHeight * scale));
+  const drawingBounds = {
+    left: plateBounds.left,
+    top: bounds.top,
+    width: plateBounds.width,
+    height: bounds.height,
+  };
   const result = drawSubject(
-    source, bounds, config.bodyCropRatio,
-    canvasWidth, config.height, personWidth, personHeight,
+    source, drawingBounds, config.bodyCropRatio,
+    config.width, config.height, personWidth, personHeight,
   );
+  const rightMargin = config.width - result.left - personWidth;
   return {
     canvas: result.canvas,
-    layout: { width: canvasWidth, height: config.height, personWidth, personHeight, top: result.top },
+    layout: {
+      width: config.width,
+      height: config.height,
+      personWidth,
+      personHeight,
+      left: result.left,
+      rightMargin,
+      top: result.top,
+    },
   };
 }
 
@@ -479,10 +502,24 @@ async function processOne(file) {
       output: { format: 'image/png' },
     });
     const cutoutImage = await loadImage(cutoutBlob);
-    const whiteSource = flattenToWhite(imageToCanvas(cutoutImage));
+    const cutoutCanvas = imageToCanvas(cutoutImage);
+    const bounds = personBounds(cutoutCanvas, { alpha: true });
+    const plateCropHeight = Math.min(
+      Math.round(bounds.height * SPEC.plate.bodyCropRatio),
+      cutoutCanvas.height - bounds.top,
+    );
+    const plateBounds = personBounds(cutoutCanvas, {
+      alpha: true,
+      region: {
+        left: bounds.left,
+        top: bounds.top,
+        width: bounds.width,
+        height: plateCropHeight,
+      },
+    });
+    const whiteSource = flattenToWhite(cutoutCanvas);
     update(48);
 
-    const bounds = personBounds(whiteSource);
     const badge = composeBadge(whiteSource, bounds);
     beautify(badge.canvas);
     const badgeBlob = await encodeJpegWithDpi(badge.canvas, SPEC.badge.quality, SPEC.dpi);
@@ -495,15 +532,17 @@ async function processOne(file) {
     }
     update(73);
 
-    const plate = composePlate(whiteSource, bounds);
+    const plate = composePlate(whiteSource, bounds, plateBounds);
     beautify(plate.canvas);
     const plateBlob = await encodeRgbPng(plate.canvas, SPEC.dpi);
     const plateMetadata = inspectPng(new Uint8Array(await plateBlob.arrayBuffer()));
     const expectedPixelsPerMeter = Math.round(SPEC.dpi / 0.0254);
     if (
-      plateMetadata.width !== plate.layout.width || plateMetadata.height !== SPEC.plate.height ||
+      plateMetadata.width !== SPEC.plate.width || plateMetadata.height !== SPEC.plate.height ||
       plateMetadata.colorType !== 2 || plateMetadata.physical?.unit !== 1 ||
       plateMetadata.physical.x !== expectedPixelsPerMeter || plateMetadata.physical.y !== expectedPixelsPerMeter
+      || Math.abs(plate.layout.left - plate.layout.rightMargin) > 1
+      || plate.layout.personWidth > Math.round(SPEC.plate.width * SPEC.plate.maxContentWidthPercent) + 1
     ) {
       throw new Error('座位牌尺寸、RGB 通道或 144 DPI 元数据自检失败');
     }
