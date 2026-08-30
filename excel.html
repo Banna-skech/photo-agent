@@ -1,0 +1,300 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>工牌/座位牌 Excel 处理工具</title>
+<script src="https://cdn.jsdelivr.net/npm/exceljs@4.4.0/dist/exceljs.min.js"></script>
+<style>
+  :root {
+    --bg: #f5f6fa;
+    --card-bg: #fff;
+    --primary: #2c3e7b;
+    --accent: #4a6cf7;
+    --text: #333;
+    --text-light: #666;
+    --border: #e0e3eb;
+    --shadow: 0 2px 12px rgba(0,0,0,.08);
+    --radius: 10px;
+  }
+  * { margin:0; padding:0; box-sizing:border-box; }
+  body {
+    font-family: "Microsoft YaHei", "PingFang SC", -apple-system, sans-serif;
+    background: var(--bg);
+    color: var(--text);
+    min-height: 100vh;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 40px 20px;
+  }
+  .container { max-width: 800px; width: 100%; }
+  .header { text-align: center; margin-bottom: 32px; }
+  .header h1 { font-size: 26px; font-weight: 700; color: var(--primary); letter-spacing: .5px; }
+  .header p { font-size: 14px; color: var(--text-light); margin-top: 6px; }
+  .card {
+    background: var(--card-bg); border-radius: var(--radius);
+    box-shadow: var(--shadow); padding: 32px; margin-bottom: 20px;
+  }
+  .upload-zone {
+    border: 2px dashed var(--border); border-radius: var(--radius);
+    padding: 48px 24px; text-align: center; cursor: pointer;
+    transition: all .2s; position: relative;
+  }
+  .upload-zone:hover, .upload-zone.drag-over {
+    border-color: var(--accent); background: rgba(74,108,247,.04);
+  }
+  .upload-zone .icon { font-size: 48px; margin-bottom: 12px; }
+  .upload-zone .title { font-size: 16px; font-weight: 600; margin-bottom: 4px; }
+  .upload-zone .hint { font-size: 13px; color: var(--text-light); }
+  #fileInput { display: none; }
+  .file-chip {
+    display: none; align-items: center; gap: 10px;
+    padding: 12px 16px; background: #f0f4ff;
+    border: 1px solid #c8d6fa; border-radius: 8px; margin-top: 16px;
+  }
+  .file-chip.show { display: flex; }
+  .file-chip .name { flex:1; font-size:14px; font-weight:500; color:var(--primary); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+  .file-chip .remove { background:none; border:none; cursor:pointer; font-size:18px; color:#999; line-height:1; padding:0 2px; }
+  .file-chip .remove:hover { color: #e74c3c; }
+  .btn {
+    display: inline-flex; align-items: center; justify-content: center;
+    gap: 8px; padding: 12px 32px; font-size: 15px; font-weight: 600;
+    border: none; border-radius: 8px; cursor: pointer; transition: all .2s;
+  }
+  .btn-primary { background: var(--accent); color: #fff; width: 100%; margin-top: 20px; }
+  .btn-primary:hover { background: #3a5ce5; }
+  .btn-primary:disabled { background: #b0bddb; cursor: not-allowed; }
+  .btn-download { background: #27ae60; color: #fff; width: 100%; margin-top: 12px; text-decoration: none; }
+  .btn-download:hover { background: #219a52; }
+  .status {
+    display: none; align-items: center; gap: 10px;
+    padding: 14px 16px; border-radius: 8px; margin-top: 16px; font-size: 14px;
+  }
+  .status.show { display: flex; }
+  .status.processing { background: #fff8e6; border: 1px solid #f0d78c; color: #8a6d14; }
+  .status.success { background: #eafaf1; border: 1px solid #a3d9b1; color: #1e7e34; }
+  .status.error { background: #fdecea; border: 1px solid #f5c6cb; color: #a94442; }
+  .spinner {
+    width: 18px; height: 18px; border: 2.5px solid #d4b74c;
+    border-top-color: transparent; border-radius: 50%;
+    animation: spin .7s linear infinite;
+  }
+  @keyframes spin { to { transform: rotate(360deg); } }
+  .preview { display: none; margin-top: 24px; }
+  .preview.show { display: block; }
+  .table-wrap {
+    overflow-x: auto; max-height: 300px; overflow-y: auto;
+    border: 1px solid var(--border); border-radius: 6px;
+  }
+  table { width: 100%; border-collapse: collapse; font-size: 13px; }
+  table th {
+    background: #D9E2F3; font-weight: 600; padding: 8px 10px;
+    border: 1px solid var(--border); text-align: center;
+    position: sticky; top: 0; z-index: 1;
+  }
+  table td { padding: 6px 10px; border: 1px solid var(--border); text-align: center; }
+  table td:nth-child(2) { text-align: left; }
+  .tabs { display: flex; gap: 0; margin-bottom: 16px; }
+  .tab {
+    padding: 8px 24px; font-size: 14px; font-weight: 600;
+    border: 1px solid var(--border); background: #f9fafc;
+    cursor: pointer; transition: all .2s;
+  }
+  .tab:first-child { border-radius: 6px 0 0 6px; }
+  .tab:last-child { border-radius: 0 6px 6px 0; }
+  .tab.active { background: var(--primary); color: #fff; border-color: var(--primary); }
+  .steps { display: flex; gap: 24px; justify-content: center; margin-bottom: 28px; }
+  .step { display: flex; align-items: center; gap: 8px; font-size: 13px; color: var(--text-light); }
+  .step .num {
+    width: 22px; height: 22px; border-radius: 50%;
+    background: var(--border); color: #999;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 12px; font-weight: 700;
+  }
+  .step.done .num { background: #27ae60; color: #fff; }
+  .step.done { color: #27ae60; }
+  .footer { text-align: center; font-size: 12px; color: #aaa; margin-top: 24px; }
+
+  /* ── 统一工具切换 ── */
+  .tool-switcher-shell {
+    max-width: 800px; width: 100%; margin: 0 0 24px; padding: 5px;
+    display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px;
+    background: #e9ecf4; border-radius: 12px;
+  }
+  .tool-switcher-link {
+    color: var(--text-light); text-align: center; text-decoration: none;
+    font-size: 14px; font-weight: 700; padding: 9px 14px; border-radius: 8px;
+    transition: background .15s, color .15s, box-shadow .15s;
+  }
+  .tool-switcher-link:hover { color: var(--accent); }
+  .tool-switcher-link.active { background: #fff; color: var(--accent); box-shadow: var(--shadow); }
+  @media (max-width: 560px) {
+    body { padding: 20px 12px; }
+    .tool-switcher-shell { margin-bottom: 18px; }
+    .tool-switcher-link { padding: 8px 6px; font-size: 12px; }
+    .card { padding: 20px 14px; }
+    .steps { gap: 10px; }
+    .step { gap: 5px; font-size: 12px; }
+  }
+</style>
+</head>
+<body>
+<nav class="tool-switcher-shell" aria-label="工具切换">
+  <a class="tool-switcher-link" href="./">📸 照片批量处理</a>
+  <a class="tool-switcher-link active" href="excel.html" aria-current="page">🏷️ Excel 工牌/座位牌</a>
+</nav>
+<div class="container">
+  <div class="header">
+    <h1>🏷️ 工牌 / 座位牌 Excel 处理</h1>
+    <p>上传系统导出的在职员工表，自动生成标准格式的工牌和座位牌 Excel</p>
+  </div>
+  <div class="steps">
+    <div class="step" id="step1"><span class="num">1</span> 上传原表</div>
+    <div class="step" id="step2"><span class="num">2</span> 预览确认</div>
+    <div class="step" id="step3"><span class="num">3</span> 下载结果</div>
+  </div>
+  <div class="card">
+    <div class="upload-zone" id="uploadZone">
+      <div class="icon">📁</div>
+      <div class="title">点击上传、拖拽文件 或 Ctrl+V 粘贴</div>
+      <div class="hint">支持 .xlsx / .xls 格式，文件在浏览器本地处理，不会上传到服务器 · 从文件夹复制文件后在此页面粘贴即可</div>
+    </div>
+    <input type="file" id="fileInput" accept=".xlsx,.xls">
+    <div class="file-chip" id="fileChip">
+      <span>📄</span>
+      <span class="name" id="fileName"></span>
+      <button class="remove" id="removeFile">✕</button>
+    </div>
+    <button class="btn btn-primary" id="processBtn" disabled>开始处理</button>
+    <div class="status" id="status">
+      <div class="spinner"></div>
+      <span id="statusText">正在处理中...</span>
+    </div>
+    <a class="btn btn-download" id="downloadBtn" style="display:none;">⬇️ 下载处理结果</a>
+  </div>
+  <div class="preview" id="preview">
+    <div class="tabs">
+      <button class="tab active" data-tab="badge">工牌</button>
+      <button class="tab" data-tab="seat">座位牌</button>
+    </div>
+    <div class="table-wrap"><table id="previewTable"></table></div>
+  </div>
+  <div class="footer">所有处理均在浏览器本地完成 · 不会上传任何数据到服务器</div>
+</div>
+<script>
+// ── 姓氏拼音映射（含多音字 & 复姓）──
+const SURNAME_PINYIN={赵:"Zhao",钱:"Qian",孙:"Sun",李:"Li",周:"Zhou",吴:"Wu",郑:"Zheng",王:"Wang",冯:"Feng",陈:"Chen",褚:"Chu",卫:"Wei",蒋:"Jiang",沈:"Shen",韩:"Han",杨:"Yang",朱:"Zhu",秦:"Qin",尤:"You",许:"Xu",何:"He",吕:"Lv",施:"Shi",张:"Zhang",孔:"Kong",曹:"Cao",严:"Yan",华:"Hua",金:"Jin",魏:"Wei",陶:"Tao",姜:"Jiang",戚:"Qi",谢:"Xie",邹:"Zou",喻:"Yu",柏:"Bai",水:"Shui",窦:"Dou",章:"Zhang",云:"Yun",苏:"Su",潘:"Pan",葛:"Ge",奚:"Xi",范:"Fan",彭:"Peng",郎:"Lang",鲁:"Lu",韦:"Wei",昌:"Chang",马:"Ma",苗:"Miao",凤:"Feng",花:"Hua",方:"Fang",俞:"Yu",任:"Ren",袁:"Yuan",柳:"Liu",酆:"Feng",鲍:"Bao",史:"Shi",唐:"Tang",费:"Fei",廉:"Lian",岑:"Cen",薛:"Xue",雷:"Lei",贺:"He",倪:"Ni",汤:"Tang",滕:"Teng",殷:"Yin",罗:"Luo",毕:"Bi",郝:"Hao",邬:"Wu",安:"An",常:"Chang",乐:"Yue",于:"Yu",时:"Shi",傅:"Fu",皮:"Pi",卞:"Bian",齐:"Qi",康:"Kang",伍:"Wu",余:"Yu",元:"Yuan",卜:"Bu",顾:"Gu",孟:"Meng",平:"Ping",黄:"Huang",和:"He",穆:"Mu",萧:"Xiao",尹:"Yin",姚:"Yao",邵:"Shao",湛:"Zhan",汪:"Wang",祁:"Qi",毛:"Mao",禹:"Yu",狄:"Di",米:"Mi",贝:"Bei",明:"Ming",臧:"Zang",计:"Ji",伏:"Fu",成:"Cheng",戴:"Dai",谈:"Tan",宋:"Song",茅:"Mao",庞:"Pang",熊:"Xiong",纪:"Ji",舒:"Shu",屈:"Qu",项:"Xiang",祝:"Zhu",董:"Dong",梁:"Liang",杜:"Du",阮:"Ruan",蓝:"Lan",闵:"Min",席:"Xi",季:"Ji",麻:"Ma",强:"Qiang",贾:"Jia",路:"Lu",娄:"Lou",危:"Wei",江:"Jiang",童:"Tong",颜:"Yan",郭:"Guo",梅:"Mei",盛:"Sheng",林:"Lin",刁:"Diao",钟:"Zhong",徐:"Xu",邱:"Qiu",骆:"Luo",高:"Gao",夏:"Xia",蔡:"Cai",田:"Tian",樊:"Fan",胡:"Hu",凌:"Ling",霍:"Huo",虞:"Yu",万:"Wan",支:"Zhi",柯:"Ke",昝:"Zan",管:"Guan",卢:"Lu",莫:"Mo",经:"Jing",房:"Fang",裘:"Qiu",缪:"Miao",干:"Gan",解:"Xie",应:"Ying",宗:"Zong",丁:"Ding",宣:"Xuan",贲:"Ben",邓:"Deng",郁:"Yu",单:"Shan",杭:"Hang",洪:"Hong",包:"Bao",诸:"Zhu",左:"Zuo",石:"Shi",崔:"Cui",吉:"Ji",钮:"Niu",龚:"Gong",程:"Cheng",嵇:"Ji",邢:"Xing",滑:"Hua",裴:"Pei",陆:"Lu",荣:"Rong",翁:"Weng",荀:"Xun",羊:"Yang",甄:"Zhen",家:"Jia",封:"Feng",芮:"Rui",羿:"Yi",储:"Chu",靳:"Jin",汲:"Ji",邴:"Bing",糜:"Mi",松:"Song",井:"Jing",段:"Duan",富:"Fu",巫:"Wu",乌:"Wu",焦:"Jiao",巴:"Ba",弓:"Gong",牧:"Mu",隗:"Wei",山:"Shan",谷:"Gu",车:"Che",侯:"Hou",宓:"Fu",蓬:"Peng",全:"Quan",郗:"Xi",班:"Ban",仰:"Yang",秋:"Qiu",仲:"Zhong",伊:"Yi",宫:"Gong",宁:"Ning",仇:"Qiu",栾:"Luan",暴:"Bao",甘:"Gan",钭:"Tou",厉:"Li",戎:"Rong",祖:"Zu",武:"Wu",符:"Fu",刘:"Liu",景:"Jing",詹:"Zhan",束:"Shu",龙:"Long",叶:"Ye",幸:"Xing",司:"Si",韶:"Shao",郜:"Gao",黎:"Li",蓟:"Ji",薄:"Bo",印:"Yin",白:"Bai",怀:"Huai",蒲:"Pu",邰:"Tai",从:"Cong",鄂:"E",索:"Suo",咸:"Xian",籍:"Ji",赖:"Lai",卓:"Zhuo",蔺:"Lin",屠:"Tu",蒙:"Meng",池:"Chi",乔:"Qiao",阴:"Yin",胥:"Xu",能:"Nai",苍:"Cang",双:"Shuang",闻:"Wen",莘:"Shen",党:"Dang",翟:"Zhai",谭:"Tan",贡:"Gong",劳:"Lao",逄:"Pang",姬:"Ji",申:"Shen",扶:"Fu",堵:"Du",冉:"Ran",宰:"Zai",郦:"Li",雍:"Yong",却:"Que",璩:"Qu",桑:"Sang",桂:"Gui",濮:"Pu",牛:"Niu",寿:"Shou",通:"Tong",边:"Bian",扈:"Hu",燕:"Yan",冀:"Ji",郏:"Jia",浦:"Pu",尚:"Shang",农:"Nong",温:"Wen",别:"Bie",庄:"Zhuang",晏:"Yan",柴:"Chai",瞿:"Qu",阎:"Yan",充:"Chong",慕:"Mu",连:"Lian",茹:"Ru",习:"Xi",宦:"Huan",艾:"Ai",鱼:"Yu",容:"Rong",向:"Xiang",古:"Gu",易:"Yi",慎:"Shen",戈:"Ge",廖:"Liao",庾:"Yu",终:"Zhong",暨:"Ji",居:"Ju",衡:"Heng",步:"Bu",都:"Du",耿:"Geng",满:"Man",弘:"Hong",匡:"Kuang",国:"Guo",文:"Wen",寇:"Kou",广:"Guang",禄:"Lu",阙:"Que",东:"Dong",欧:"Ou",殳:"Shu",沃:"Wo",利:"Li",蔚:"Yu",越:"Yue",夔:"Kui",隆:"Long",师:"Shi",巩:"Gong",厍:"She",聂:"Nie",晁:"Chao",勾:"Gou",敖:"Ao",融:"Rong",冷:"Leng",訾:"Zi",辛:"Xin",阚:"Kan",那:"Na",简:"Jian",饶:"Rao",空:"Kong",曾:"Zeng",毋:"Wu",沙:"Sha",乜:"Nie",养:"Yang",鞠:"Ju",须:"Xu",丰:"Feng",巢:"Chao",关:"Guan",蒯:"Kuai",相:"Xiang",查:"Zha",后:"Hou",荆:"Jing",红:"Hong",游:"You",竺:"Zhu",权:"Quan",逯:"Lu",盖:"Ge",益:"Yi",桓:"Huan",公:"Gong",独:"Du",邝:"Kuang",区:"Ou",种:"Chong",员:"Yun",祭:"Zhai",繁:"Po",句:"Gou",阿:"E",秘:"Bi",召:"Shao",折:"She",覃:"Qin",闫:"Yan",兰:"Lan",
+// 复姓
+万俟:"Moqi",尉迟:"Yuchi",长孙:"Zhangsun",司马:"Sima",上官:"Shangguan",欧阳:"Ouyang",夏侯:"Xiahou",诸葛:"Zhuge",闻人:"Wenren",东方:"Dongfang",赫连:"Helian",皇甫:"Huangfu",公羊:"Gongyang",澹台:"Tantai",公冶:"Gongye",宗政:"Zongzheng",濮阳:"Puyang",淳于:"Chunyu",单于:"Chanyu",太叔:"Taishu",申屠:"Shentu",公孙:"Gongsun",仲孙:"Zhongsun",轩辕:"Xuanyuan",令狐:"Linghu",锺离:"Zhongli",宇文:"Yuwen",慕容:"Murong",鲜于:"Xianyu",闾丘:"Lvqiu",司徒:"Situ",司空:"Sikong",司寇:"Sikou",端木:"Duanmu",南宫:"Nangong",西门:"Ximen",东门:"Dongmen",第五:"Diwu",拓拔:"Tuoba",百里:"Baili",呼延:"Huyan",梁丘:"Liangqiu",左丘:"Zuoqiu",东郭:"Dongguo",南门:"Nanmen",巫马:"Wuma",公西:"Gongxi",乐正:"Yuezheng",谷梁:"Guliang",段干:"Duangan",宰父:"Zaifu",夹谷:"Jiagu",公良:"Gongliang",壤驷:"Rangsi",漆雕:"Qidiao",亓官:"Qiguan",羊舌:"Yangshe",微生:"Weisheng",颛孙:"Zhuansun",子车:"Ziche"};
+
+function capitalizeEachWord(n){if(!n||typeof n!=='string')return n;return n.split(' ').map(w=>w?w[0].toUpperCase()+w.slice(1):w).join(' ')}
+function getSurnamePinyin(c){
+  if(!c||typeof c!=='string'||c.length===0)return null;
+  // 先查单字多音字（优先级最高）
+  var s=SURNAME_PINYIN[c.charAt(0)];
+  if(s)return s;
+  // 再查复姓（前2字）
+  if(c.length>=2){var cp=c.substring(0,2);if(SURNAME_PINYIN[cp])return SURNAME_PINYIN[cp];}
+  return null;
+}
+function formatSeatBadgeName(e,c){
+  var g,s,p=e.split(' ');
+  if(p.length>1){s=p[0];g=p.slice(1).join('')}else{g=e;s=getSurnamePinyin(c);if(!s)s=c?c.charAt(0):''}
+  return g+'_'+s;
+}
+
+async function readSourceExcel(file){
+  const buf=await file.arrayBuffer();
+  const wb=new ExcelJS.Workbook();await wb.xlsx.load(buf);
+  const ws=wb.worksheets[0];
+  const rows=[];ws.eachRow({includeEmpty:true},r=>{const v=[];r.eachCell({includeEmpty:false},(c,cn)=>{v[cn-1]=c.value});rows.push(v)});
+  if(rows.length<2)throw new Error('Excel文件格式不正确');
+  const norm=s=>String(s==null?'':s).replace(/[\s　]+/g,'');
+  const aliases={
+    '姓名':['姓名','员工姓名','中文名','名字','中文姓名'],
+    '英文名/姓名拼音':['英文名/姓名拼音','英文名','姓名拼音','拼音','英文姓名','英文名/拼音','English Name','EnglishName'],
+    '工号':['工号','员工工号','员工编号','编号','工號','工作证号','Job No'],
+    '二级部门':['二级部门','二级单位','部门二'],
+    '三级部门':['三级部门','三级单位','部门三'],
+    '详细职位名称':['详细职位名称','职位名称','职位','岗位','岗位名称','职务'],
+    '工作地点':['工作地点','工作地','所在地','地点']
+  };
+  // 必需列
+  const req=['姓名','英文名/姓名拼音','工号'];
+  // 可选列
+  const opt=['二级部门','三级部门','详细职位名称','工作地点'];
+  const cols=req.concat(opt);
+  const matchRow=r=>{const s=new Set((r||[]).map(norm));let n=0;cols.forEach(k=>{if(aliases[k].some(a=>s.has(norm(a))))n++});return n};
+  let hdr=0,best=-1;
+  for(let i=0;i<Math.min(rows.length,20);i++){const m=matchRow(rows[i]);if(m>best){best=m;hdr=i}}
+  const ci={};(rows[hdr]||[]).forEach((h,i)=>{const n=norm(h);for(const k of cols){if(aliases[k].some(a=>norm(a)===n)){ci[k]=i;break}}});
+  const miss=req.filter(k=>!(k in ci));if(miss.length)throw new Error('缺少列: '+miss.join('、'));
+  const emps=[];
+  for(let i=hdr+1;i<rows.length;i++){
+    const r=rows[i];if(!r||r.every(c=>!c))continue;
+    const c=String(r[ci['姓名']]||'').trim(),e=String(r[ci['英文名/姓名拼音']]||'').trim();
+    const j=String(r[ci['工号']]||'').trim();
+    const d2=(ci['二级部门']!=null?String(r[ci['二级部门']]||'').trim():'');
+    const d3=(ci['三级部门']!=null?String(r[ci['三级部门']]||'').trim():'');
+    const t=(ci['详细职位名称']!=null?String(r[ci['详细职位名称']]||'').trim():'');
+    const loc=(ci['工作地点']!=null?String(r[ci['工作地点']]||'').trim():'');
+    const en=capitalizeEachWord(e),sn=formatSeatBadgeName(en,c);
+    const cd=d2&&d3?d2+' - '+d3:(d2||d3||'');
+    emps.push({chineseName:c,engName:en,seatBadgeName:sn,jobNumber:j,deptL2:d2,combinedDept:cd,jobTitle:t,location:loc});
+  }
+  if(!emps.length)throw new Error('未找到员工数据');
+  return emps;
+}
+
+async function generateOutput(emps){
+  const wb=new ExcelJS.Workbook();
+  const hf={name:'宋体',size:10,bold:true},df={name:'宋体',size:10};
+  const fill={type:'pattern',pattern:'solid',fgColor:{argb:'FFD9E2F3'}};
+  const bd={top:{style:'thin'},left:{style:'thin'},bottom:{style:'thin'},right:{style:'thin'}};
+  const ha={horizontal:'center',vertical:'middle'};
+  function ss(ws,hr,dr,cc){for(let r=dr;r<=ws.rowCount;r++){const row=ws.getRow(r);for(let c=1;c<=cc;c++){const cl=row.getCell(c);cl.border=bd;cl.font=(r===hr)?hf:df;if(r===hr){cl.fill=fill;cl.alignment=ha}}}}
+  const bd2=[...emps].sort((a,b)=>a.jobNumber.localeCompare(b.jobNumber,'zh-CN'));
+  const bs=wb.addWorksheet('工牌');bs.columns=[{key:'chineseName',width:8.6},{key:'engName',width:18.5},{key:'jobNumber',width:8}];
+  bs.addRow(['姓名','英文名/姓名拼音','工号']);bd2.forEach(e=>bs.addRow([e.chineseName,e.engName,e.jobNumber]));ss(bs,1,1,3);
+  const bd2p=bd2.map(e=>({'姓名':e.chineseName,'英文名/姓名拼音':e.engName,'工号':e.jobNumber}));
+  const sd=[...emps].sort((a,b)=>a.deptL2.localeCompare(b.deptL2,'zh-CN'));
+  const hasLoc=emps.some(e=>e.location);
+  if(hasLoc){
+    seatCols=[{key:'chineseName',width:8.6},{key:'seatBadgeName',width:18.5},{key:'jobNumber',width:8},{key:'combinedDept',width:33.9},{key:'jobTitle',width:19.6},{key:'location',width:15}];
+    seatHdrs=['姓名','英文名/姓名拼音','工号','二级部门','详细职位名称','工作地点'];
+    seatFields=['姓名','英文名/姓名拼音','工号','二级部门','详细职位名称','工作地点'];
+    ss2=wb.addWorksheet('座位牌');ss2.columns=seatCols;
+    ss2.addRow(seatHdrs);sd.forEach(e=>ss2.addRow([e.chineseName,e.seatBadgeName,e.jobNumber,e.combinedDept,e.jobTitle,e.location]));ss(ss2,1,1,6);
+    var sdp=sd.map(e=>({'姓名':e.chineseName,'英文名/姓名拼音':e.seatBadgeName,'工号':e.jobNumber,'二级部门':e.combinedDept,'详细职位名称':e.jobTitle,'工作地点':e.location}));
+  }else{
+    seatCols=[{key:'chineseName',width:8.6},{key:'seatBadgeName',width:18.5},{key:'jobNumber',width:8},{key:'combinedDept',width:33.9},{key:'jobTitle',width:19.6}];
+    seatHdrs=['姓名','英文名/姓名拼音','工号','二级部门','详细职位名称'];
+    seatFields=['姓名','英文名/姓名拼音','工号','二级部门','详细职位名称'];
+    var ss2=wb.addWorksheet('座位牌');ss2.columns=seatCols;
+    ss2.addRow(seatHdrs);sd.forEach(e=>ss2.addRow([e.chineseName,e.seatBadgeName,e.jobNumber,e.combinedDept,e.jobTitle]));ss(ss2,1,1,5);
+    var sdp=sd.map(e=>({'姓名':e.chineseName,'英文名/姓名拼音':e.seatBadgeName,'工号':e.jobNumber,'二级部门':e.combinedDept,'详细职位名称':e.jobTitle}));
+  }
+  const buf=await wb.xlsx.writeBuffer();
+  return {blob:new Blob([buf],{type:'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'}),badgeData:bd2p,seatData:sdp};
+}
+
+const uz=document.getElementById('uploadZone'),fi=document.getElementById('fileInput'),fc=document.getElementById('fileChip'),fn=document.getElementById('fileName'),rf=document.getElementById('removeFile'),pb=document.getElementById('processBtn'),sdv=document.getElementById('status'),st=document.getElementById('statusText'),db=document.getElementById('downloadBtn'),pv=document.getElementById('preview'),pt=document.getElementById('previewTable'),s1=document.getElementById('step1'),s2=document.getElementById('step2'),s3=document.getElementById('step3');
+let sf=null,rb=null,bp=null,sp=null,ct='badge';
+uz.addEventListener('click',()=>fi.click());
+uz.addEventListener('dragover',e=>{e.preventDefault();uz.classList.add('drag-over')});
+uz.addEventListener('dragleave',()=>uz.classList.remove('drag-over'));
+uz.addEventListener('drop',e=>{e.preventDefault();uz.classList.remove('drag-over');let f=e.dataTransfer.files;if(f.length>0)selectFile(f[0])});
+fi.addEventListener('change',()=>{if(fi.files.length>0)selectFile(fi.files[0])});
+document.addEventListener('paste',e=>{const t=e.target;if(t&&(t.tagName==='INPUT'||t.tagName==='TEXTAREA'||t.isContentEditable))return;const items=e.clipboardData&&e.clipboardData.items;if(!items)return;for(let i=0;i<items.length;i++){if(items[i].kind==='file'){e.preventDefault();selectFile(items[i].getAsFile());break}}});
+rf.addEventListener('click',e=>{e.stopPropagation();clearFile()});
+function selectFile(f){if(!f.name.match(/\.xlsx?$/i)){showStatus('error','请上传 .xlsx 或 .xls 格式的文件');return}sf=f;fn.textContent=f.name;fc.classList.add('show');pb.disabled=false;hideStatus();db.style.display='none';pv.classList.remove('show');s1.classList.add('done');s2.classList.remove('done');s3.classList.remove('done')}
+function clearFile(){sf=null;rb=null;bp=null;sp=null;fc.classList.remove('show');fi.value='';pb.disabled=true;db.style.display='none';pv.classList.remove('show');hideStatus();s1.classList.remove('done');s2.classList.remove('done');s3.classList.remove('done')}
+function showStatus(t,m){sdv.className='status show '+t;st.textContent=m;sdv.querySelector('.spinner').style.display=t==='processing'?'block':'none'}
+function hideStatus(){sdv.className='status'}
+function renderPreview(d){if(!d||d.length===0){pt.innerHTML='';return}const ks=Object.keys(d[0]);let h='<thead><tr>';ks.forEach(k=>h+='<th>'+k+'</th>');h+='</tr></thead><tbody>';d.forEach(r=>{h+='<tr>';ks.forEach(k=>h+='<td>'+(r[k]||'')+'</td>');h+='</tr>'});h+='</tbody>';pt.innerHTML=h}
+pb.addEventListener('click',async()=>{if(!sf)return;pb.disabled=true;showStatus('processing','正在处理中...');db.style.display='none';pv.classList.remove('show');try{const e=await readSourceExcel(sf);const r=await generateOutput(e);rb=r.blob;bp=r.badgeData;sp=r.seatData;showStatus('success','处理完成！共 '+e.length+' 名员工');db.style.display='inline-flex';db.href=URL.createObjectURL(rb);db.download='工牌座位牌_'+new Date().toISOString().slice(0,10).replace(/-/g,'')+'.xlsx';pv.classList.add('show');renderPreview(bp);s2.classList.add('done');db.onclick=()=>{s3.classList.add('done')}}catch(e){console.error(e);showStatus('error','处理失败: '+e.message);s2.classList.remove('done')}finally{pb.disabled=false}});
+document.querySelector('.tabs').addEventListener('click',e=>{if(!e.target.classList.contains('tab'))return;document.querySelectorAll('.tab').forEach(t=>t.classList.remove('active'));e.target.classList.add('active');ct=e.target.dataset.tab;renderPreview(ct==='badge'?bp:sp)});
+</script>
+</body>
+</html>
